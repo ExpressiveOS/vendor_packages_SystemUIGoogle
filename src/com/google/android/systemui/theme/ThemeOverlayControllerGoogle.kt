@@ -59,7 +59,7 @@ constructor(
     @Main private val mainExecutor: Executor,
     @Background bgExecutor: Executor,
     themeOverlayApplier: ThemeOverlayApplier,
-    secureSettings: SecureSettings,
+    private val secureSettings: SecureSettings,
     wallpaperManager: WallpaperManager,
     userManager: UserManager,
     deviceProvisionedController: DeviceProvisionedController,
@@ -145,23 +145,51 @@ constructor(
         }
     }
 
+    override fun start() {
+        super.start()
+        // Also once per boot: the listener only writes for user 0, so a holiday that ended
+        // while another user was in the foreground left its colors behind
+        configurationChangedListener.onThemeChanged()
+    }
+
     override fun dump(pw: PrintWriter, args: Array<out String>) {
         super.dump(pw, args)
         pw.println("ThemeOverlayControllerGoogle: yes")
     }
 
     fun getBootColors(): IntArray {
-        return intArrayOf(
-            context.getColor(com.android.internal.R.color.system_brand_a_dark),
-            context.getColor(com.android.internal.R.color.system_brand_c_dark),
-            context.getColor(com.android.internal.R.color.system_brand_d_dark),
-            context.getColor(com.android.internal.R.color.system_brand_b_dark),
-        )
+        return getHolidayBootColors()
+            ?: intArrayOf(
+                context.getColor(com.android.internal.R.color.system_brand_a_dark),
+                context.getColor(com.android.internal.R.color.system_brand_c_dark),
+                context.getColor(com.android.internal.R.color.system_brand_d_dark),
+                context.getColor(com.android.internal.R.color.system_brand_b_dark),
+            )
+    }
+
+    /**
+     * The holiday's four petal colors while Evolver's holiday themes have the holiday boot
+     * animation on, else null. The setting is "RRGGBB,RRGGBB,RRGGBB,RRGGBB" for user 0; anything
+     * else is ignored.
+     */
+    private fun getHolidayBootColors(): IntArray? {
+        val value =
+            secureSettings.getStringForUser(HOLIDAY_BOOTANIM_SETTING, UserHandle.USER_SYSTEM)
+        if (value.isNullOrEmpty()) {
+            return null
+        }
+        if (!HOLIDAY_BOOT_COLORS.matches(value)) {
+            Log.w(TAG, "Ignoring malformed $HOLIDAY_BOOTANIM_SETTING: $value")
+            return null
+        }
+        return value.split(',').map { it.toInt(16) or 0xFF000000.toInt() }.toIntArray()
     }
 
     companion object {
         private const val TAG = "ThemeOverlayController"
         private const val ACTION_BOOTANIM_STYLE_CHANGED =
             "org.evolution.intent.action.BOOTANIM_STYLE_CHANGED"
+        private const val HOLIDAY_BOOTANIM_SETTING = "expressiveos_holiday_bootanim"
+        private val HOLIDAY_BOOT_COLORS = Regex("[0-9A-Fa-f]{6}(,[0-9A-Fa-f]{6}){3}")
     }
 }
