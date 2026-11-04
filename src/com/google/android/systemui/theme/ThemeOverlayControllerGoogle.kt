@@ -168,9 +168,9 @@ constructor(
     }
 
     /**
-     * The holiday's four petal colors while Evolver's holiday themes have the holiday boot
-     * animation on, else null. The setting is "RRGGBB,RRGGBB,RRGGBB,RRGGBB" for user 0; anything
-     * else is ignored.
+     * The holiday's four petal colors while Expressive Studio's holiday themes have the holiday
+     * boot animation on, else null. The setting is "RRGGBB,RRGGBB,RRGGBB,RRGGBB" for user 0;
+     * anything else is ignored.
      */
     private fun getHolidayBootColors(): IntArray? {
         val value =
