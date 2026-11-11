@@ -20,5 +20,11 @@
     <application
         android:appComponentFactory="com.google.android.systemui.SystemUIGoogleAppComponentFactory"
         tools:replace="android:appComponentFactory">
+
+        <!-- Charging optimisation: Settings Intelligence binds this to apply "Limit to 80%".
+             Callers are checked in code (privileged Settings Intelligence or system only). -->
+        <service
+            android:name="com.google.android.systemui.power.batteryhealth.HealthService"
+            android:exported="true" />
     </application>
 </manifest>
