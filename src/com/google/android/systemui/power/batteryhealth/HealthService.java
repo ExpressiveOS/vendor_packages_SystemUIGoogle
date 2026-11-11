@@ -17,6 +17,7 @@
 package com.google.android.systemui.power.batteryhealth;
 
 import android.app.Service;
+import android.content.ContentResolver;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
@@ -28,6 +29,7 @@ import android.os.UserHandle;
 import android.util.Log;
 
 import lineageos.health.HealthInterface;
+import lineageos.providers.LineageSettings;
 
 /**
  * Battery health service that Settings Intelligence binds to for
@@ -42,6 +44,11 @@ import lineageos.health.HealthInterface;
  * Google's own implementation is not in our SystemUIGoogle source, so this one
  * maps the policy onto LineageOS charging control, which the device health HAL
  * (vendor.lineage.health.IChargingControl) already supports and persists.
+ *
+ * The settings are written directly: LineageOS's ChargingControlController
+ * watches them and applies the change. Its own binder setters write the same
+ * settings without clearing the caller's identity, so a call from SystemUI
+ * fails in LineageSettingsProvider ("Package android does not belong to <uid>").
  */
 public class HealthService extends Service {
     private static final String TAG = "EosHealthService";
@@ -131,14 +138,21 @@ public class HealthService extends Service {
                 Log.w(TAG, "setChargingPolicy(" + policy + "): charging control not supported");
                 return false;
             }
+            final ContentResolver cr = getContentResolver();
             final boolean ok;
             if (policy == POLICY_LONG_LIFE) {
-                ok = health.setMode(HealthInterface.MODE_LIMIT)
-                        && health.setLimit(CHARGE_LIMIT_PERCENT)
-                        && health.setEnabled(true);
+                ok = LineageSettings.System.putInt(cr,
+                                LineageSettings.System.CHARGING_CONTROL_MODE,
+                                HealthInterface.MODE_LIMIT)
+                        && LineageSettings.System.putInt(cr,
+                                LineageSettings.System.CHARGING_CONTROL_LIMIT,
+                                CHARGE_LIMIT_PERCENT)
+                        && LineageSettings.System.putInt(cr,
+                                LineageSettings.System.CHARGING_CONTROL_ENABLED, 1);
             } else {
                 // POLICY_DEFAULT, and adaptive (handled by Settings, not here).
-                ok = health.setEnabled(false);
+                ok = LineageSettings.System.putInt(cr,
+                        LineageSettings.System.CHARGING_CONTROL_ENABLED, 0);
             }
             Log.i(TAG, "setChargingPolicy(" + policy + ") -> " + ok);
             return ok;
