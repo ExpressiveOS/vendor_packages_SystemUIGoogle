@@ -42,8 +42,11 @@ import lineageos.providers.LineageSettings;
  * this service the bind never connects and the switch turns itself off again.
  *
  * Google's own implementation is not in our SystemUIGoogle source, so this one
- * maps the policy onto LineageOS charging control, which the device health HAL
- * (vendor.lineage.health.IChargingControl) already supports and persists.
+ * maps the policy onto LineageOS charging control where the device has
+ * LineageOS's health HAL (vendor.lineage.health.IChargingControl, e.g. the
+ * Pixel 7 Pro). Phones on Google's stock vendor image (the Pixel 11 series)
+ * have no LineageOS health HAL; there the policy goes to Google's own battery
+ * HAL, as on stock (see GoogleBatteryHal).
  *
  * The settings are written directly: LineageOS's ChargingControlController
  * watches them and applies the change. Its own binder setters write the same
@@ -62,8 +65,8 @@ public class HealthService extends Service {
     private static final int TRANSACTION_SET_CHARGING_POLICY = 6;
 
     // android.hardware.health.BatteryChargingPolicy
-    private static final int POLICY_DEFAULT = 1;
-    private static final int POLICY_LONG_LIFE = 2;
+    static final int POLICY_DEFAULT = 1;
+    static final int POLICY_LONG_LIFE = 2;
 
     private static final int CHARGE_LIMIT_PERCENT = 80;
 
@@ -131,6 +134,10 @@ public class HealthService extends Service {
     }
 
     private boolean setChargingPolicy(int policy) {
+        if (!GoogleBatteryHal.hasLineageHealth()) {
+            return GoogleBatteryHal.setChargingPolicy(
+                    policy == POLICY_LONG_LIFE ? POLICY_LONG_LIFE : POLICY_DEFAULT);
+        }
         final long token = Binder.clearCallingIdentity();
         try {
             final HealthInterface health = HealthInterface.getInstance(this);

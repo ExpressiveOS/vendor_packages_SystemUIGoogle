@@ -26,5 +26,17 @@
         <service
             android:name="com.google.android.systemui.power.batteryhealth.HealthService"
             android:exported="true" />
+
+        <!-- Re-applies "Limit to 80%" at boot through Google's battery HAL on phones
+             without LineageOS charging control (Pixel 11 series). -->
+        <receiver
+            android:name="com.google.android.systemui.power.batteryhealth.ChargeLimitBootReceiver"
+            android:directBootAware="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>
