@@ -17,6 +17,11 @@
         android:permissionFlags="allowedInPrivateComputeCore"/>
     <uses-permission android:name="com.google.android.ambientindication.permission.AMBIENT_INDICATION"/>
 
+    <!-- ExpressiveOS: Expressive Launcher's widget picker (QuickstepWidgetPickerActivity, the
+         lock screen hub's "Add widget") needs this; it's signature|privileged, and SystemUI is
+         a privileged app. -->
+    <uses-permission android:name="dev.launcher.expressive.l3.permission.START_WIDGET_PICKER_ACTIVITY"/>
+
     <application
         android:appComponentFactory="com.google.android.systemui.SystemUIGoogleAppComponentFactory"
         tools:replace="android:appComponentFactory">
