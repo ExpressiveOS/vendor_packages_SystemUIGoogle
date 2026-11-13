@@ -52,8 +52,11 @@
         <item>ic_dolphin_qs_icon_tint_48dp</item>
     </string-array>
 
-    <!-- Launcher package name for overlaying icons. -->
-    <string name="launcher_overlayable_package" translatable="false">com.google.android.apps.nexuslauncher</string>
+    <!-- Launcher package name for overlaying icons, and the app SystemUI asks for the lock screen
+         hub's widget picker. ExpressiveOS: Expressive Launcher, the default Home app; in Pixel
+         Launcher mode the kit's ExpressiveLauncherSystemUIPixelModeOverlay sets Pixel Launcher's
+         package back. -->
+    <string name="launcher_overlayable_package" translatable="false">dev.launcher.expressive.l3</string>
 
     <!-- ThemePicker package name for overlaying icons. -->
     <string name="themepicker_overlayable_package" translatable="false">com.google.android.apps.wallpaper</string>
