@@ -188,7 +188,7 @@ constructor(
     companion object {
         private const val TAG = "ThemeOverlayController"
         private const val ACTION_BOOTANIM_STYLE_CHANGED =
-            "org.evolution.intent.action.BOOTANIM_STYLE_CHANGED"
+            "org.expressiveos.intent.action.BOOTANIM_STYLE_CHANGED"
         private const val HOLIDAY_BOOTANIM_SETTING = "expressiveos_holiday_bootanim"
         private val HOLIDAY_BOOT_COLORS = Regex("[0-9A-Fa-f]{6}(,[0-9A-Fa-f]{6}){3}")
     }
