@@ -35,16 +35,22 @@ import lineageos.app.LineageContextConstants;
  * SystemUIGoogle sets the 80 % limit on these phones with one call,
  * IGoogleBattery.setChargingPolicy(int) (transaction 23; 1 = default,
  * 2 = long life), and applies it again at every boot because the HAL does not
- * keep it. The stock vendor policy lets platform_app (SystemUI) call the HAL.
+ * keep it. Battery health telemetry is queried via IGoogleBattery transactions
+ * 13-16 and 18. The stock vendor policy lets platform_app (SystemUI) call the HAL.
  *
- * Transaction code and values: Google's stock SystemUIGoogle, CP4A.261105.040.D1
- * (ChargeLimitController.updateChargingPolicy -> IGoogleBattery$Stub$Proxy).
+ * Transaction codes and parcel layout: Google's stock SystemUIGoogle, CP4A.261105.040.D1
+ * (ChargeLimitController / HealthManager -> IGoogleBattery$Stub$Proxy & BatteryHealthStats).
  */
 final class GoogleBatteryHal {
     private static final String TAG = "EosHealthService";
 
     private static final String DESCRIPTOR = "vendor.google.google_battery.IGoogleBattery";
     private static final String INSTANCE = DESCRIPTOR + "/default";
+    private static final int TRANSACTION_GET_HEALTH_CAPACITY_INDEX = 13;
+    private static final int TRANSACTION_GET_HEALTH_IMPEDANCE_INDEX = 14;
+    private static final int TRANSACTION_GET_HEALTH_INDEX = 15;
+    private static final int TRANSACTION_GET_HEALTH_STATUS = 16;
+    private static final int TRANSACTION_GET_HEALTH_STATS = 18;
     private static final int TRANSACTION_SET_CHARGING_POLICY = 23;
 
     /** Settings.Secure key Settings Intelligence writes: 1 = "Limit to 80%" on. */
@@ -60,6 +66,113 @@ final class GoogleBatteryHal {
     /** True when the device declares Google's battery HAL. */
     static boolean isDeclared() {
         return ServiceManager.isDeclared(INSTANCE);
+    }
+
+    private static IBinder getService() {
+        if (!isDeclared()) {
+            return null;
+        }
+        return Binder.allowBlocking(ServiceManager.waitForDeclaredService(INSTANCE));
+    }
+
+    private static int queryInt(IBinder hal, int transactionCode, String name) {
+        final Parcel data = Parcel.obtain();
+        final Parcel reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(DESCRIPTOR);
+            if (!hal.transact(transactionCode, data, reply, 0)) {
+                Log.w(TAG, "GoogleBattery: " + name + " not implemented");
+                return -1;
+            }
+            reply.readException();
+            return reply.readInt();
+        } catch (RemoteException | RuntimeException e) {
+            Log.e(TAG, "GoogleBattery: " + name + " failed", e);
+            return -1;
+        } finally {
+            reply.recycle();
+            data.recycle();
+        }
+    }
+
+    /**
+     * Queries battery health metrics from IGoogleBattery/default.
+     *
+     * @return {healthIndex, performanceIndex, capacityIndex, healthStatus}, or null if unavailable.
+     */
+    static int[] getHealthData() {
+        final long token = Binder.clearCallingIdentity();
+        try {
+            final IBinder hal = getService();
+            if (hal == null) {
+                Log.w(TAG, "GoogleBattery: " + INSTANCE + " not running");
+                return null;
+            }
+            final int healthIndex = queryInt(
+                    hal, TRANSACTION_GET_HEALTH_INDEX, "getHealthIndex");
+            final int perfIndex = queryInt(
+                    hal, TRANSACTION_GET_HEALTH_IMPEDANCE_INDEX, "getHealthImpedanceIndex");
+            final int capacityIndex = queryInt(
+                    hal, TRANSACTION_GET_HEALTH_CAPACITY_INDEX, "getHealthCapacityIndex");
+            final int healthStatus = queryInt(
+                    hal, TRANSACTION_GET_HEALTH_STATUS, "getHealthStatus");
+            return new int[] { healthIndex, perfIndex, capacityIndex, healthStatus };
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+    }
+
+    /**
+     * Queries battery health metrics for a specific algorithm via IGoogleBattery.getHealthStats(int),
+     * falling back to getHealthData() if transaction 18 fails.
+     *
+     * @return {healthIndex, performanceIndex, capacityIndex, healthStatus}, or null if unavailable.
+     */
+    static int[] getHealthDataWithAlgo(int algo) {
+        final long token = Binder.clearCallingIdentity();
+        final Parcel data = Parcel.obtain();
+        final Parcel reply = Parcel.obtain();
+        try {
+            final IBinder hal = getService();
+            if (hal == null) {
+                Log.w(TAG, "GoogleBattery: " + INSTANCE + " not running");
+                return null;
+            }
+            data.writeInterfaceToken(DESCRIPTOR);
+            data.writeInt(algo);
+            if (!hal.transact(TRANSACTION_GET_HEALTH_STATS, data, reply, 0)) {
+                Log.w(TAG, "GoogleBattery: getHealthStats not implemented, falling back");
+                return getHealthData();
+            }
+            reply.readException();
+            if (reply.readInt() == 0) {
+                return null;
+            }
+            final int parcelableSize = reply.readInt();
+            if (parcelableSize < 24) {
+                Log.w(TAG, "GoogleBattery: BatteryHealthStats size too small ("
+                        + parcelableSize + "), falling back");
+                return getHealthData();
+            }
+            reply.readInt(); // healthAlgo
+            final int healthStatus = reply.readInt();
+            final int healthIndex = reply.readInt();
+            final int healthCapacityIndex = reply.readInt();
+            final int healthImpedanceIndex = reply.readInt();
+            return new int[] {
+                healthIndex,
+                healthImpedanceIndex,
+                healthCapacityIndex,
+                healthStatus
+            };
+        } catch (RemoteException | RuntimeException e) {
+            Log.e(TAG, "GoogleBattery: getHealthStats(" + algo + ") failed, falling back", e);
+            return getHealthData();
+        } finally {
+            reply.recycle();
+            data.recycle();
+            Binder.restoreCallingIdentity(token);
+        }
     }
 
     static boolean setChargingPolicy(int policy) {

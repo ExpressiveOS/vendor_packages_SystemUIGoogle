@@ -33,20 +33,21 @@ import lineageos.providers.LineageSettings;
 
 /**
  * Battery health service that Settings Intelligence binds to for
- * Settings > Battery > Charging optimisation.
+ * Settings > Battery > Charging optimisation and battery health telemetry.
  *
  * Settings Intelligence binds com.android.systemui /
  * com.google.android.systemui.power.batteryhealth.HealthService and calls
- * setChargingPolicy (transaction 6) when the "Limit to 80%" switch is
- * toggled. It saves the switch state only if that call returns true. Without
- * this service the bind never connects and the switch turns itself off again.
+ * getHealthData (transaction 1), getHealthDataWithAlgo (transaction 5), and
+ * setChargingPolicy (transaction 6). On setChargingPolicy, it saves the switch
+ * state only if the call returns true. Without this service the bind never
+ * connects and the switch turns itself off again.
  *
  * Google's own implementation is not in our SystemUIGoogle source, so this one
  * maps the policy onto LineageOS charging control where the device has
  * LineageOS's health HAL (vendor.lineage.health.IChargingControl, e.g. the
  * Pixel 7 Pro). Phones on Google's stock vendor image (the Pixel 11 series)
- * have no LineageOS health HAL; there the policy goes to Google's own battery
- * HAL, as on stock (see GoogleBatteryHal).
+ * have no LineageOS health HAL; there policies and battery health telemetry go
+ * to Google's own battery HAL, as on stock (see GoogleBatteryHal).
  *
  * The settings are written directly: LineageOS's ChargingControlController
  * watches them and applies the change. Its own binder setters write the same
@@ -60,8 +61,13 @@ public class HealthService extends Service {
             "com.google.android.systemui.power.batteryhealth.IHealthService";
     private static final String SETTINGS_INTELLIGENCE =
             "com.google.android.settings.intelligence";
+    private static final String TURBO = "com.google.android.apps.turbo";
 
-    // Transaction codes used by Settings Intelligence (decompiled, version 957002900).
+    // Transaction codes from stock SystemUIGoogle HealthService$binder$1 (CP4A.261105.040.D1).
+    private static final int TRANSACTION_GET_HEALTH_DATA = 1;
+    private static final int TRANSACTION_REGISTER_HEALTH_LISTENER = 2;
+    private static final int TRANSACTION_UNREGISTER_HEALTH_LISTENER = 3;
+    private static final int TRANSACTION_GET_HEALTH_DATA_WITH_ALGO = 5;
     private static final int TRANSACTION_SET_CHARGING_POLICY = 6;
 
     // android.hardware.health.BatteryChargingPolicy
@@ -84,6 +90,31 @@ public class HealthService extends Service {
             data.enforceInterface(DESCRIPTOR);
             enforceCaller();
 
+            if (code == TRANSACTION_GET_HEALTH_DATA) {
+                final int[] healthData = GoogleBatteryHal.getHealthData();
+                if (reply != null) {
+                    reply.writeNoException();
+                    writeHealthData(reply, healthData);
+                }
+                return true;
+            }
+
+            if (code == TRANSACTION_REGISTER_HEALTH_LISTENER
+                    || code == TRANSACTION_UNREGISTER_HEALTH_LISTENER) {
+                data.readStrongBinder();
+                return true;
+            }
+
+            if (code == TRANSACTION_GET_HEALTH_DATA_WITH_ALGO) {
+                final int algo = data.readInt();
+                final int[] healthData = GoogleBatteryHal.getHealthDataWithAlgo(algo);
+                if (reply != null) {
+                    reply.writeNoException();
+                    writeHealthData(reply, healthData);
+                }
+                return true;
+            }
+
             if (code == TRANSACTION_SET_CHARGING_POLICY) {
                 final int policy = data.readInt();
                 final boolean ok = setChargingPolicy(policy);
@@ -94,7 +125,7 @@ public class HealthService extends Service {
                 return true;
             }
 
-            // Other calls (battery health data on newer Pixels) are not supported here.
+            // Remaining calls (incompatible charger, pulsar, bodega) are not implemented here.
             // Answer with an empty result: false, 0 or a null parcelable.
             if (reply != null) {
                 reply.writeNoException();
@@ -104,25 +135,38 @@ public class HealthService extends Service {
         }
     };
 
+    private static void writeHealthData(Parcel reply, int[] healthData) {
+        if (healthData == null || healthData.length < 4) {
+            reply.writeInt(0);
+            return;
+        }
+        reply.writeInt(1);
+        reply.writeInt(healthData[0]); // healthIndex
+        reply.writeInt(healthData[1]); // performanceIndex (healthImpedanceIndex)
+        reply.writeInt(healthData[2]); // capacityIndex (healthCapacityIndex)
+        reply.writeInt(healthData[3]); // healthStatus
+    }
+
     @Override
     public IBinder onBind(Intent intent) {
         return mBinder;
     }
 
-    /** Only the privileged system Settings Intelligence app may change charging. */
+    /** Only system/self, Settings Intelligence, and Device Health Services may call this service. */
     private void enforceCaller() {
         final int uid = Binder.getCallingUid();
-        if (UserHandle.getAppId(uid) == android.os.Process.SYSTEM_UID) {
+        if (uid == android.os.Process.myUid()
+                || UserHandle.getAppId(uid) == android.os.Process.SYSTEM_UID) {
             return;
         }
         final PackageManager pm = getPackageManager();
         final String[] packages = pm.getPackagesForUid(uid);
         if (packages != null) {
             for (String pkg : packages) {
-                if (!SETTINGS_INTELLIGENCE.equals(pkg)) continue;
+                if (!SETTINGS_INTELLIGENCE.equals(pkg) && !TURBO.equals(pkg)) continue;
                 try {
                     final ApplicationInfo ai = pm.getApplicationInfo(pkg, 0);
-                    if (ai.isPrivilegedApp()) {
+                    if (ai.isPrivilegedApp() || ai.isSystemApp()) {
                         return;
                     }
                 } catch (PackageManager.NameNotFoundException e) {
