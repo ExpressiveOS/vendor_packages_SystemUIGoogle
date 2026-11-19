@@ -25,18 +25,15 @@ import android.os.ServiceManager;
 import android.provider.Settings;
 import android.util.Log;
 
-import lineageos.app.LineageContextConstants;
-
 /**
  * Google's own battery HAL, vendor.google.google_battery (IGoogleBattery V5).
  *
- * Phones that run Google's stock vendor image (the Pixel 11 series) have no
- * LineageOS health HAL, so LineageOS charging control is not there. Stock
- * SystemUIGoogle sets the 80 % limit on these phones with one call,
+ * Phones that run Google's stock vendor image (the Pixel 11 series) use
  * IGoogleBattery.setChargingPolicy(int) (transaction 23; 1 = default,
- * 2 = long life), and applies it again at every boot because the HAL does not
- * keep it. Battery health telemetry is queried via IGoogleBattery transactions
- * 13-16 and 18. The stock vendor policy lets platform_app (SystemUI) call the HAL.
+ * 2 = long life) for the 80% charging limit, and transactions 13-16 and 18 for
+ * battery health telemetry. Phones with ExpressiveOS's health HAL
+ * (vendor.expressiveos.health.IChargingControl/default, Pixel 7 Pro & Pixel 8 Pro)
+ * apply the limit via HealthService.applyChargingPolicy. Both are re-applied at boot.
  *
  * Transaction codes and parcel layout: Google's stock SystemUIGoogle, CP4A.261105.040.D1
  * (ChargeLimitController / HealthManager -> IGoogleBattery$Stub$Proxy & BatteryHealthStats).
@@ -57,11 +54,6 @@ final class GoogleBatteryHal {
     static final String CHARGE_OPTIMIZATION_MODE = "charge_optimization_mode";
 
     private GoogleBatteryHal() {}
-
-    /** True when LineageOS charging control is running (phones built with its health HAL). */
-    static boolean hasLineageHealth() {
-        return ServiceManager.checkService(LineageContextConstants.LINEAGE_HEALTH_INTERFACE) != null;
-    }
 
     /** True when the device declares Google's battery HAL. */
     static boolean isDeclared() {
@@ -208,15 +200,12 @@ final class GoogleBatteryHal {
         }
     }
 
-    /** Applies the saved switch state again, as stock does at boot. */
+    /** Re-applies the saved 80% charging limit at boot via EosHealth (P7/P8) or GoogleBattery (P11). */
     static void reapply(Context context) {
-        if (hasLineageHealth()) {
-            return; // LineageOS keeps its own settings across reboots.
-        }
         final int mode = Settings.Secure.getInt(context.getContentResolver(),
                 CHARGE_OPTIMIZATION_MODE, 0);
         if (mode == 1) {
-            setChargingPolicy(HealthService.POLICY_LONG_LIFE);
+            HealthService.applyChargingPolicy(HealthService.POLICY_LONG_LIFE);
         }
     }
 }

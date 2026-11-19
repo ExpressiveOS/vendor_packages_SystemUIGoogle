@@ -43,6 +43,7 @@ android_library {
         "smartspace-proto-java",
         "smartspace-proto-lite-java",
         "tensorflowlite_java",
+        "vendor.expressiveos.health-V1-java",
     ],
     enable_ksp: true,
 }
@@ -67,7 +68,6 @@ android_library {
         "dagger.useBindingGraphFix=ENABLED",
     ],
     manifest: "AndroidManifest.xml",
-    additional_manifests: ["LineageManifest.xml"],
 }
 
 

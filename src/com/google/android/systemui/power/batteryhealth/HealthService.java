@@ -17,7 +17,6 @@
 package com.google.android.systemui.power.batteryhealth;
 
 import android.app.Service;
-import android.content.ContentResolver;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
@@ -25,11 +24,13 @@ import android.os.Binder;
 import android.os.IBinder;
 import android.os.Parcel;
 import android.os.RemoteException;
+import android.os.ServiceManager;
 import android.os.UserHandle;
 import android.util.Log;
 
-import lineageos.health.HealthInterface;
-import lineageos.providers.LineageSettings;
+import vendor.expressiveos.health.ChargingControlSupportedMode;
+import vendor.expressiveos.health.ChargingLimitInfo;
+import vendor.expressiveos.health.IChargingControl;
 
 /**
  * Battery health service that Settings Intelligence binds to for
@@ -42,23 +43,19 @@ import lineageos.providers.LineageSettings;
  * state only if the call returns true. Without this service the bind never
  * connects and the switch turns itself off again.
  *
- * Google's own implementation is not in our SystemUIGoogle source, so this one
- * maps the policy onto LineageOS charging control where the device has
- * LineageOS's health HAL (vendor.lineage.health.IChargingControl, e.g. the
- * Pixel 7 Pro). Phones on Google's stock vendor image (the Pixel 11 series)
- * have no LineageOS health HAL; there policies and battery health telemetry go
- * to Google's own battery HAL, as on stock (see GoogleBatteryHal).
- *
- * The settings are written directly: LineageOS's ChargingControlController
- * watches them and applies the change. Its own binder setters write the same
- * settings without clearing the caller's identity, so a call from SystemUI
- * fails in LineageSettingsProvider ("Package android does not belong to <uid>").
+ * In ExpressiveOS 2.0 (pure AOSP):
+ * - Phones declaring vendor.expressiveos.health.IChargingControl/default (Pixel 7 Pro
+ *   and Pixel 8 Pro) apply the 80% charging limit directly via IChargingControl.setChargingLimit.
+ * - Phones on Google's stock vendor image (the Pixel 11 series) apply policies and query
+ *   battery health telemetry through Google's own battery HAL (see GoogleBatteryHal).
  */
 public class HealthService extends Service {
     private static final String TAG = "EosHealthService";
 
     private static final String DESCRIPTOR =
             "com.google.android.systemui.power.batteryhealth.IHealthService";
+    private static final String EOS_HEALTH_INSTANCE =
+            IChargingControl.DESCRIPTOR + "/default";
     private static final String SETTINGS_INTELLIGENCE =
             "com.google.android.settings.intelligence";
     private static final String TURBO = "com.google.android.apps.turbo";
@@ -74,7 +71,10 @@ public class HealthService extends Service {
     static final int POLICY_DEFAULT = 1;
     static final int POLICY_LONG_LIFE = 2;
 
-    private static final int CHARGE_LIMIT_PERCENT = 80;
+    private static final int CHARGE_LIMIT_START_PERCENT = 75;
+    private static final int CHARGE_LIMIT_STOP_PERCENT = 80;
+    private static final int CHARGE_DEFAULT_START_PERCENT = 0;
+    private static final int CHARGE_DEFAULT_STOP_PERCENT = 100;
 
     private final IBinder mBinder = new Binder() {
         @Override
@@ -117,7 +117,7 @@ public class HealthService extends Service {
 
             if (code == TRANSACTION_SET_CHARGING_POLICY) {
                 final int policy = data.readInt();
-                final boolean ok = setChargingPolicy(policy);
+                final boolean ok = applyChargingPolicy(policy);
                 if (reply != null) {
                     reply.writeNoException();
                     reply.writeInt(ok ? 1 : 0);
@@ -177,38 +177,43 @@ public class HealthService extends Service {
         throw new SecurityException("uid " + uid + " may not call " + DESCRIPTOR);
     }
 
-    private boolean setChargingPolicy(int policy) {
-        if (!GoogleBatteryHal.hasLineageHealth()) {
-            return GoogleBatteryHal.setChargingPolicy(
-                    policy == POLICY_LONG_LIFE ? POLICY_LONG_LIFE : POLICY_DEFAULT);
+    /** True when the device declares ExpressiveOS's health HAL (vendor.expressiveos.health). */
+    static boolean hasEosHealthHal() {
+        return ServiceManager.isDeclared(EOS_HEALTH_INSTANCE);
+    }
+
+    static boolean applyChargingPolicy(int policy) {
+        final int effectivePolicy = (policy == POLICY_LONG_LIFE) ? POLICY_LONG_LIFE : POLICY_DEFAULT;
+        if (!hasEosHealthHal()) {
+            return GoogleBatteryHal.setChargingPolicy(effectivePolicy);
         }
         final long token = Binder.clearCallingIdentity();
         try {
-            final HealthInterface health = HealthInterface.getInstance(this);
-            if (!health.isChargingControlSupported()) {
-                Log.w(TAG, "setChargingPolicy(" + policy + "): charging control not supported");
+            final IBinder binder = Binder.allowBlocking(
+                    ServiceManager.waitForDeclaredService(EOS_HEALTH_INSTANCE));
+            final IChargingControl hal = IChargingControl.Stub.asInterface(binder);
+            if (hal == null) {
+                Log.w(TAG, "applyChargingPolicy(" + policy + "): " + EOS_HEALTH_INSTANCE + " null");
                 return false;
             }
-            final ContentResolver cr = getContentResolver();
-            final boolean ok;
-            if (policy == POLICY_LONG_LIFE) {
-                ok = LineageSettings.System.putInt(cr,
-                                LineageSettings.System.CHARGING_CONTROL_MODE,
-                                HealthInterface.MODE_LIMIT)
-                        && LineageSettings.System.putInt(cr,
-                                LineageSettings.System.CHARGING_CONTROL_LIMIT,
-                                CHARGE_LIMIT_PERCENT)
-                        && LineageSettings.System.putInt(cr,
-                                LineageSettings.System.CHARGING_CONTROL_ENABLED, 1);
-            } else {
-                // POLICY_DEFAULT, and adaptive (handled by Settings, not here).
-                ok = LineageSettings.System.putInt(cr,
-                        LineageSettings.System.CHARGING_CONTROL_ENABLED, 0);
+            final int supported = hal.getSupportedMode();
+            if ((supported & ChargingControlSupportedMode.LIMIT) == 0) {
+                Log.w(TAG, "applyChargingPolicy(" + policy + "): LIMIT mode not supported");
+                return false;
             }
-            Log.i(TAG, "setChargingPolicy(" + policy + ") -> " + ok);
-            return ok;
-        } catch (RuntimeException e) {
-            Log.e(TAG, "setChargingPolicy(" + policy + ") failed", e);
+            final ChargingLimitInfo limit = new ChargingLimitInfo();
+            if (effectivePolicy == POLICY_LONG_LIFE) {
+                limit.min = CHARGE_LIMIT_START_PERCENT;
+                limit.max = CHARGE_LIMIT_STOP_PERCENT;
+            } else {
+                limit.min = CHARGE_DEFAULT_START_PERCENT;
+                limit.max = CHARGE_DEFAULT_STOP_PERCENT;
+            }
+            hal.setChargingLimit(limit);
+            Log.i(TAG, "applyChargingPolicy(" + policy + ") via EosHealth [" + limit.min + "," + limit.max + "]");
+            return true;
+        } catch (RemoteException | RuntimeException e) {
+            Log.e(TAG, "applyChargingPolicy(" + policy + ") failed", e);
             return false;
         } finally {
             Binder.restoreCallingIdentity(token);

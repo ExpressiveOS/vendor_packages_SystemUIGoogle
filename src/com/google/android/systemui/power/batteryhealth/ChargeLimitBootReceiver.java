@@ -21,8 +21,8 @@ import android.content.Context;
 import android.content.Intent;
 
 /**
- * Re-applies "Limit to 80%" through Google's battery HAL after boot on phones
- * without LineageOS charging control (the HAL forgets the policy on reboot).
+ * Re-applies "Limit to 80%" through vendor.expressiveos.health (Pixel 7/8) or
+ * Google's battery HAL (Pixel 11) after boot (both HALs reset charging limits on reboot).
  */
 public class ChargeLimitBootReceiver extends BroadcastReceiver {
     @Override
